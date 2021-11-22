@@ -23,7 +23,7 @@ The workflow and associated files are as follows:
    1. a task that awaits a new item in the queue, which may include multiple scenarios, and
    2. a task that calls a scenario-specific run routine
 
-4. A routine that starts the application to wait for tasks.
+4. A routine (*app.py*) that starts the application to wait for tasks.
 
 *The OpenAgua client is a separate Python package called [openagua-client](https://pypi.org/project/openagua-client/) and is already included in the openagua-engine package as a "Client" attribute of the engine.
 
