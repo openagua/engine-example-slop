@@ -1,3 +1,8 @@
+import platform
 from tasks import app
 
-app.start(['-A', 'tasks', 'worker', '-l', 'INFO', '-P' 'solo'])
+if __name__ == '__main__':
+    args = ['-A', 'tasks', 'worker', '-l', 'INFO']
+    if platform.system() == 'Windows':
+        args.extend(['-P', 'solo'])
+    app.start(args)
