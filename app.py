@@ -2,7 +2,7 @@ import platform
 from tasks import app
 
 if __name__ == '__main__':
-    args = ['-A', 'tasks', 'worker', '-l', 'DEBUG']
+    args = ['-A', 'tasks', 'worker', '-l', 'WARNING']
     if platform.system() == 'Windows':
         args.extend(['-P', 'solo'])
     app.start(args)
