@@ -6,7 +6,7 @@ from dateutil.parser import parse
 
 class SloppyModel(object):
 
-    def __init__(self, oa_client, network, template, scenario_id):
+    def __init__(self, oa_client, network, template, scenario_id, debug=False):
         baseline_scenarios = [s for s in network['scenarios'] if s['layout']['class'] == 'baseline']
         baseline_scenario = baseline_scenarios[0]
         start = parse(baseline_scenario['start_time'])
@@ -17,7 +17,7 @@ class SloppyModel(object):
 
         self.network = network
         self.template = template
-        self.dates = dates[:5]
+        self.dates = dates[:5] if debug else dates
         self.total_steps = len(self.dates)
         self.i = -1
 
