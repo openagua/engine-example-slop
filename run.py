@@ -1,9 +1,9 @@
+from sys import stderr
 from time import sleep
 import datetime as dt
 from loguru import logger
 from openagua_engine import OpenAguaEngine
 from slop import SloppyModel
-
 
 def run_model(network_id, scenario_ids, **kwargs):
     """
@@ -19,6 +19,7 @@ def run_model(network_id, scenario_ids, **kwargs):
 
     run_name = kwargs.get('run_name')
     debug = kwargs.get('debug')
+    logger.add(stderr, level='DEBUG' if debug else 'INFO')
 
     oa = OpenAguaEngine(
         name=run_name,
@@ -31,6 +32,7 @@ def run_model(network_id, scenario_ids, **kwargs):
 
     # Tell OA that the model is started (this reports to the OpenAgua API and any logged in web client)
     oa.start()
+    logger.info('Started')
 
     # Get the network data (note the ['network'] at the end; this will be fixed in the future).
     network = oa.Client.get_network(network_id)['network']
@@ -61,7 +63,7 @@ def run_model(network_id, scenario_ids, **kwargs):
             model.step()
 
             if date.month == 10 and date.day == 1:
-                logger.debug(date)
+                logger.info(date)
 
             # This reports progress to the web client (i.e. app user)
             if date.day == 1:
