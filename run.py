@@ -38,7 +38,7 @@ def run_model(network_id, scenario_ids, **kwargs):
     template = oa.Client.get_template(template_id)['template']
 
     # create the model
-    model = SloppyModel(oa.Client, network, template, scenario_ids[0])
+    model = SloppyModel(oa.Client, network, template, scenario_ids)
 
     oa.total_steps = model.total_steps  # This lets the engine report the correct percent complete
 
@@ -84,13 +84,15 @@ if __name__ == '__main__':
     dotenv.load_dotenv()
 
     network_id = 1548
-    scenario_id = 3610
+    # all_scenario_ids = [[3610], [3682]]
+    all_scenario_ids = [[3682]]
     kwargs = dict(
         run_name='baseline',
         request_host='http://localhost:5000',
         guid='test-model'
     )
 
-    run_model(network_id, scenario_ids=[scenario_id], **kwargs)
+    for scenario_ids in all_scenario_ids:
+        run_model(network_id, scenario_ids=scenario_ids, **kwargs)
 
     logger.info('Finished')

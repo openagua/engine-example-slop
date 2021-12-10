@@ -6,7 +6,7 @@ from dateutil.parser import parse
 
 class SloppyModel(object):
 
-    def __init__(self, oa_client, network, template, scenario_id, debug=False):
+    def __init__(self, oa_client, network, template, scenario_ids, debug=False):
         baseline_scenarios = [s for s in network['scenarios'] if s['layout']['class'] == 'baseline']
         baseline_scenario = baseline_scenarios[0]
         start = parse(baseline_scenario['start_time'])
@@ -25,7 +25,7 @@ class SloppyModel(object):
 
         self.resources = {}
 
-        self._init(network, scenario_id)
+        self._init(network, scenario_ids)
 
         self.results = pd.DataFrame(
             index=pd.DatetimeIndex(self.dates),
@@ -43,14 +43,13 @@ class SloppyModel(object):
             if _type_nodes:
                 return node
 
-    def _init(self, network, scenario_id):
+    def _init(self, network, scenario_ids):
         nodes = network['nodes']
         template_id = network['layout']['active_template_id']
 
-        def get_attr_value(res, attr_name, resourcescenarios):
+        def get_attr_value(res, attr_name, attribute_data):
             res_attr_id = next((ra for ra in res['attributes'] if ra['name'] == attr_name))['id']
-            rs = next((rs for rs in resourcescenarios if rs['resource_attr_id'] == res_attr_id))
-            dataset = rs['dataset']
+            dataset = attribute_data[res_attr_id]['dataset']
             if dataset['metadata'].get('input_method') == 'function':
                 value = literal_eval(str(dataset['metadata']['data']))
             else:
@@ -62,32 +61,45 @@ class SloppyModel(object):
                     value = float(value)
             return value
 
-        scenario_data = self.conn.get_scenario(scenario_id, include_data=True)['scenario']['resourcescenarios']
-        # for rs in scenario_data['resourcescenarios']:
+        # pull out the resource scenarios (data), overwriting parent scenarios with child scenarios
+        resource_scenarios = {}
+        attribute_data = {}
+        for scenario_id in scenario_ids:
+
+            _scenario_id = scenario_id
+            while _scenario_id and _scenario_id not in resource_scenarios:
+                scenario = self.conn.get_scenario(_scenario_id, include_data=True)['scenario']
+                resource_scenarios[_scenario_id] = scenario['resourcescenarios']
+                _scenario_id = scenario['parent_id']
+
+            reversed_scenario_ids = list(reversed(resource_scenarios.keys()))
+            for scenario_id in reversed_scenario_ids:
+                for resource_scenario in resource_scenarios[scenario_id]:
+                    attribute_data[resource_scenario['resource_attr_id']] = resource_scenario
 
         # inflow
         node = self.get_node_by_type(nodes, template_id, 'Inflow')
         self.resources['Inflow'] = node
-        inflow = get_attr_value(node, 'Runoff', scenario_data)
+        inflow = get_attr_value(node, 'Runoff', attribute_data)
         self.data = inflow * 0.0864
         self.data.columns = ['inflow']
 
         # ag demand
         node = self.get_node_by_type(nodes, template_id, 'Agricultural Demand')
         self.resources['Agricultural Demand'] = node
-        demand = get_attr_value(node, 'Demand', scenario_data)
+        demand = get_attr_value(node, 'Demand', attribute_data)
         self.data['demand'] = demand * 0.0864
 
         # instream demand
         node = self.get_node_by_type(nodes, template_id, 'Instream Demand')
         self.resources['Instream Demand'] = node
-        demand = get_attr_value(node, 'Instream Flow Requirement', scenario_data)
+        demand = get_attr_value(node, 'Instream Flow Requirement', attribute_data)
         self.data['ifr'] = demand * 0.0864
 
         node = self.get_node_by_type(nodes, template_id, 'Reservoir')
         self.resources['Reservoir'] = node
-        self.reservoir_capacity = get_attr_value(node, 'Storage Capacity', scenario_data)
-        self.initial_storage = get_attr_value(node, 'Initial Storage', scenario_data)
+        self.reservoir_capacity = get_attr_value(node, 'Storage Capacity', attribute_data)
+        self.initial_storage = get_attr_value(node, 'Initial Storage', attribute_data)
 
         self.resources['Outflow'] = self.get_node_by_type(nodes, template_id, 'Outflow')
 
