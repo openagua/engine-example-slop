@@ -1,5 +1,6 @@
 from openagua_engine import create_app
 from run import run_model
+from loguru import logger
 
 from dotenv import load_dotenv
 
@@ -12,6 +13,7 @@ app = create_app()
 def run(**kwargs):
     network_id = kwargs.pop('network_id')
     scenario_id_combinations = kwargs.pop('scenario_ids', [])
+    logger.info(scenario_id_combinations)
 
     for scen_ids in scenario_id_combinations:
         # This is how to run a single scenario model asynchronously

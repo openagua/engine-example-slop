@@ -1,9 +1,11 @@
+import os
 from sys import stderr
 from time import sleep
 import datetime as dt
 from loguru import logger
 from openagua_engine import OpenAguaEngine
 from slop import SloppyModel
+
 
 def run_model(network_id, scenario_ids, **kwargs):
     """
@@ -19,7 +21,11 @@ def run_model(network_id, scenario_ids, **kwargs):
 
     run_name = kwargs.get('run_name')
     debug = kwargs.get('debug')
-    logger.add(stderr, level='DEBUG' if debug else 'INFO')
+    logger.remove()
+    loglevel = os.environ.get('LOGURU_LEVEL', 'INFO')
+    logger.add(stderr, level=loglevel)
+
+    logger.info('Running model with scenarios: '.format(scenario_ids))
 
     oa = OpenAguaEngine(
         name=run_name,
@@ -40,7 +46,7 @@ def run_model(network_id, scenario_ids, **kwargs):
     template = oa.Client.get_template(template_id)['template']
 
     # create the model
-    model = SloppyModel(oa.Client, network, template, scenario_ids)
+    model = SloppyModel(oa.Client, network, template, scenario_ids, run_name)
 
     oa.total_steps = model.total_steps  # This lets the engine report the correct percent complete
 
@@ -67,17 +73,20 @@ def run_model(network_id, scenario_ids, **kwargs):
 
             # This reports progress to the web client (i.e. app user)
             if date.day == 1:
-                oa.step(datetime=date, step=i+1)
+                oa.step(datetime=date, step=i + 1)
 
         except Exception as err:
             logger.info(err)
             oa.error(extra_info=err)
             break
 
+    oa.step(datetime=date, step=i + 1)
+    logger.debug(f'Model finished after {i + 1} steps. Saving...')
     model.save()
+    logger.debug('Data saved!')
 
     # Tell OA that the model is finished
-    oa.finish(step=i+1)  # include the last step in case we are only intermittently reporting
+    oa.finish(step=i + 1)  # include the last step in case we are only intermittently reporting
 
 
 if __name__ == '__main__':
@@ -87,11 +96,12 @@ if __name__ == '__main__':
 
     network_id = 1548
     # all_scenario_ids = [[3610], [3682]]
-    all_scenario_ids = [[3682]]
+    all_scenario_ids = [[3610]]
     kwargs = dict(
         run_name='baseline',
         request_host='http://localhost:5000',
-        guid='test-model'
+        guid='test-model',
+        debug=True
     )
 
     for scenario_ids in all_scenario_ids:

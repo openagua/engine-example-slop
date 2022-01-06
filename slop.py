@@ -2,13 +2,14 @@ import datetime as dt
 from ast import literal_eval
 import pandas as pd
 from dateutil.parser import parse
-
+from loguru import logger
 
 class SloppyModel(object):
 
-    def __init__(self, oa_client, network, template, scenario_ids, debug=False):
+    def __init__(self, oa_client, network, template, scenario_ids, run_name, debug=False):
         baseline_scenarios = [s for s in network['scenarios'] if s['layout']['class'] == 'baseline']
         baseline_scenario = baseline_scenarios[0]
+        self.run_name = run_name
         start = parse(baseline_scenario['start_time'])
         end = parse(baseline_scenario['end_time'])
         timestep = baseline_scenario['time_step']
@@ -17,7 +18,7 @@ class SloppyModel(object):
 
         self.network = network
         self.template = template
-        self.dates = dates[:5] if debug else dates
+        self.dates = dates[:100] if debug else dates
         self.total_steps = len(self.dates)
         self.i = -1
 
@@ -47,63 +48,93 @@ class SloppyModel(object):
         nodes = network['nodes']
         template_id = network['layout']['active_template_id']
 
-        def get_attr_value(res, attr_name, attribute_data):
-            res_attr_id = next((ra for ra in res['attributes'] if ra['name'] == attr_name))['id']
-            dataset = attribute_data[res_attr_id]['dataset']
-            if dataset['metadata'].get('input_method') == 'function':
-                value = literal_eval(str(dataset['metadata']['data']))
-            else:
-                value = dataset['value']
-                datatype = dataset['type']
-                if datatype == 'timeseries':
-                    value = pd.read_json(value)
-                elif datatype == 'scalar':
-                    value = float(value)
-            return value
-
         # pull out the resource scenarios (data), overwriting parent scenarios with child scenarios
-        resource_scenarios = {}
-        attribute_data = {}
-        for scenario_id in scenario_ids:
+        self.attr_data = {}
+        scenarios = {}
+        scenario_names = []
+        baseline = [s for s in network['scenarios'] if s['layout']['class'] == 'baseline'][0]
+        organized_scenario_ids = [baseline['id']]
 
+        logger.info('Collecting data')
+        for i, scenario_id in enumerate(scenario_ids):
+
+            scenario = [s for s in network['scenarios'] if s['id'] == scenario_id][0]
+            logger.info(f"Processing scenario \"{scenario['name']}\"")
+
+            # create the final scenario name
+            scenario_names.append(scenario['name'])
             _scenario_id = scenario_id
-            while _scenario_id and _scenario_id not in resource_scenarios:
-                scenario = self.conn.get_scenario(_scenario_id, include_data=True)['scenario']
-                resource_scenarios[_scenario_id] = scenario['resourcescenarios']
-                _scenario_id = scenario['parent_id']
+            branch_scenario_ids = []
 
-            reversed_scenario_ids = list(reversed(resource_scenarios.keys()))
-            for scenario_id in reversed_scenario_ids:
-                for resource_scenario in resource_scenarios[scenario_id]:
-                    attribute_data[resource_scenario['resource_attr_id']] = resource_scenario
+            # loop through the scenario path (branch)
+            while _scenario_id and _scenario_id not in scenarios:
+                if _scenario_id not in organized_scenario_ids:
+                    branch_scenario_ids.append(_scenario_id)
+                _scenario = self.conn.get_scenario(_scenario_id, include_data=True)['scenario']
+                logger.debug('Collecting data for scenario "{}"'.format(_scenario['name']))
+                scenarios[_scenario_id] = _scenario
+                _scenario_id = _scenario['parent_id']
+
+            organized_scenario_ids.extend(list(reversed(branch_scenario_ids)))
+
+        logger.info('Organizing data')
+        for i, scenario_id in enumerate(organized_scenario_ids):
+            scenario = scenarios[scenario_id]
+            logger.debug('Overriding data with scenario "{}"'.format(scenario['name']))
+            for resource_scenario in scenario['resourcescenarios']:
+                res_attr_id = resource_scenario['resource_attr_id']
+                dataset = resource_scenario['dataset']
+                if res_attr_id not in self.attr_data or self.attr_data[res_attr_id] != dataset:
+                    self.attr_data[res_attr_id] = dataset
+
+        # The scenario name needs to be defined for this uncertainty/option combination
+        # For now, this is defined here, rather than provided by the GUI or OpenAgua Engine
+        self.scenario_name = '{}: {}'.format(self.run_name, ' / '.join(scenario_names))
 
         # inflow
         node = self.get_node_by_type(nodes, template_id, 'Inflow')
         self.resources['Inflow'] = node
-        inflow = get_attr_value(node, 'Runoff', attribute_data)
+        inflow = self.get_attr_value(node, 'Runoff')
         self.data = inflow * 0.0864
         self.data.columns = ['inflow']
 
         # ag demand
         node = self.get_node_by_type(nodes, template_id, 'Agricultural Demand')
         self.resources['Agricultural Demand'] = node
-        demand = get_attr_value(node, 'Demand', attribute_data)
+        demand = self.get_attr_value(node, 'Demand')
         self.data['demand'] = demand * 0.0864
 
         # instream demand
         node = self.get_node_by_type(nodes, template_id, 'Instream Demand')
         self.resources['Instream Demand'] = node
-        demand = get_attr_value(node, 'Instream Flow Requirement', attribute_data)
+        demand = self.get_attr_value(node, 'Instream Flow Requirement')
         self.data['ifr'] = demand * 0.0864
 
         node = self.get_node_by_type(nodes, template_id, 'Reservoir')
         self.resources['Reservoir'] = node
-        self.reservoir_capacity = get_attr_value(node, 'Storage Capacity', attribute_data)
-        self.initial_storage = get_attr_value(node, 'Initial Storage', attribute_data)
+        self.reservoir_capacity = self.get_attr_value(node, 'Storage Capacity')
+        self.initial_storage = self.get_attr_value(node, 'Initial Storage')
 
         self.resources['Outflow'] = self.get_node_by_type(nodes, template_id, 'Outflow')
 
+        logger.info(f'Running scenario \"{self.scenario_name}\"')
+
+
         return
+
+    def get_attr_value(self, res, attr_name):
+        res_attr_id = next((ra for ra in res['attributes'] if ra['name'] == attr_name))['id']
+        dataset = self.attr_data[res_attr_id]
+        if dataset['metadata'].get('input_method') == 'function':
+            value = literal_eval(str(dataset['metadata']['data']))
+        else:
+            value = dataset['value']
+            datatype = dataset['type']
+            if datatype == 'timeseries':
+                value = pd.read_json(value)
+            elif datatype == 'scalar':
+                value = float(value)
+        return value
 
     def step(self):
         # CORE MODEL ROUTINE
@@ -165,7 +196,7 @@ class SloppyModel(object):
             resourcescenario = dict(
                 resource_attr_id=res_attr['id'],
                 dataset={
-                    'name': f"{attr_name} for ${res['name']}",
+                    'name': f"{attr_name} for {res['name']}",
                     'type': 'timeseries',
                     'unit_id': tattr['unit_id'],
                     'metadata': {'Source': 'David Rheinheimer', 'Method': 'Python SLOP model.'},
@@ -176,13 +207,35 @@ class SloppyModel(object):
 
         # create the scenario
         now = dt.datetime.now()
-        scenario = dict(
-            name=f'SLOPPY - {now}',
-            description='A sloppy model, created in an afternoon',
-            layout={'class': 'results'},
-            network_id=self.network['id'],
-            resourcescenarios=resourcescenarios
-        )
-        resp = self.conn.add_scenario(network_id=self.network['id'], scenario=scenario)
+        scenario_name = self.scenario_name  # There could be many naming schemes. Here, we will just use the default.
+        # First, check and see if a scenario of the same name already exists, and overwrite it if it does. If results
+        # are overwritten like this, previously saved figures in the OpenAgua GUI will be updated. In the future,
+        # the GUI could be changed to use the latest results of the same run name to be able to see older runs.
+        scenario = self.conn.hydra('get_scenario_by_name', self.network['id'], scenario_name, include_data=False)
+        if 'error' in scenario:
+            logger.info('Creating new scenario.')
+            scenario = dict(
+                name=scenario_name,
+                description='A sloppy model, created in an afternoon',
+                layout={'class': 'results', 'run': self.run_name},
+                network_id=self.network['id'],
+            )
+            scenario = self.conn.add_scenario(network_id=self.network['id'], scenario=scenario)['scenario']
+            logger.debug(scenario)
+        else:
+            logger.info('Using old scenario.')
+
+        logger.info('Updating scenario data.')
+        for resourcescenario in resourcescenarios:
+            scenario.update(
+                name=scenario_name,
+                layout={'class': 'results', 'run': self.run_name},
+                resourcescenarios=[resourcescenario]
+            )
+        # Note that this is very inefficient; it should be parallelized
+        for rs in resourcescenarios:
+            if 'id' not in scenario:
+                logger.debug(scenario)
+            resp = self.conn.hydra('update_resourcedata', scenario['id'], [rs])
 
         return
