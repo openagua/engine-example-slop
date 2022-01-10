@@ -30,7 +30,6 @@ def run_model(network_id, scenario_ids, **kwargs):
     oa = OpenAguaEngine(
         name=run_name,
         guid=guid,
-        request_host=kwargs.get('request_host'),
         network_id=network_id,
         run_key=None,  # basic run
         scenario_ids=scenario_ids,
